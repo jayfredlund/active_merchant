@@ -399,6 +399,12 @@ module ActiveMerchant #:nodoc:
         xml.tag! 'clientLibrary' ,'Ruby Active Merchant'
         xml.tag! 'clientLibraryVersion',  VERSION
         xml.tag! 'clientEnvironment' , RUBY_PLATFORM
+        if options[:merchant_descriptor]
+          xml.tag! 'invoiceHeader' do
+            xml.tag! 'merchantDescriptor', @options[:merchant_descriptor][:name]
+            xml.tag! 'merchantDescriptorContact', @options[:merchant_descriptor][:phone]
+          end
+        end
       end
 
       def add_purchase_data(xml, money = 0, include_grand_total = false, options={})

@@ -34,7 +34,11 @@ class RemoteCyberSourceTest < Test::Unit::TestCase
       :currency => 'USD',
       :email => 'someguy1232@fakeemail.net',
       :ignore_avs => 'true',
-      :ignore_cvv => 'true'
+      :ignore_cvv => 'true',
+      :merchant_descriptor => {
+        :name => 'KotisDesign',
+        :phone => '2064661800'
+      }
     }
 
     @subscription_options = {
