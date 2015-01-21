@@ -615,17 +615,7 @@ module ActiveMerchant #:nodoc:
       # Contact CyberSource, make the SOAP request, and parse the reply into a
       # Response object
       def commit(request, options)
-
-        request = build_request(request, options)
-        puts request
-        begin
-          response = parse(ssl_post(test? ? self.test_url : self.live_url, request))
-        rescue ActiveMerchant::ResponseError => e
-          puts 'ERROR!!'
-          return e
-          puts e.response
-        end
-        puts response
+        response = parse(ssl_post(test? ? self.test_url : self.live_url, build_request(request, options)))
 
         success = response[:decision] == "ACCEPT"
         message = @@response_codes[('r' + response[:reasonCode]).to_sym] rescue response[:message]
