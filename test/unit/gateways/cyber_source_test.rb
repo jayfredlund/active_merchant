@@ -1,6 +1,8 @@
 require 'test_helper'
 
 class CyberSourceTest < Test::Unit::TestCase
+  include CommStub
+
   def setup
     Base.gateway_mode = :test
 
@@ -89,6 +91,61 @@ class CyberSourceTest < Test::Unit::TestCase
     assert_success response
     assert_equal "#{@options[:order_id]};#{response.params['requestID']};#{response.params['requestToken']}", response.authorization
     assert response.test?
+  end
+
+  def test_successful_credit_cart_purchase_single_request_ignore_avs
+    @gateway.expects(:ssl_post).with do |host, request_body|
+      assert_match %r'<ignoreAVSResult>true</ignoreAVSResult>', request_body
+      assert_not_match %r'<ignoreCVResult>', request_body
+      true
+    end.returns(successful_purchase_response)
+
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(
+      ignore_avs: true
+    ))
+    assert_success response
+  end
+
+  def test_successful_credit_cart_purchase_single_request_without_ignore_avs
+    @gateway.expects(:ssl_post).with do |host, request_body|
+      assert_not_match %r'<ignoreAVSResult>', request_body
+      assert_not_match %r'<ignoreCVResult>', request_body
+      true
+    end.returns(successful_purchase_response)
+
+    # globally ignored AVS for gateway instance:
+    @gateway.options[:ignore_avs] = true
+
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(
+      ignore_avs: false
+    ))
+    assert_success response
+  end
+
+  def test_successful_credit_cart_purchase_single_request_ignore_ccv
+    @gateway.expects(:ssl_post).with do |host, request_body|
+      assert_not_match %r'<ignoreAVSResult>', request_body
+      assert_match %r'<ignoreCVResult>true</ignoreCVResult>', request_body
+      true
+    end.returns(successful_purchase_response)
+
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(
+      ignore_cvv: true
+    ))
+    assert_success response
+  end
+
+  def test_successful_credit_cart_purchase_single_request_without_ignore_ccv
+    @gateway.expects(:ssl_post).with do |host, request_body|
+      assert_not_match %r'<ignoreAVSResult>', request_body
+      assert_not_match %r'<ignoreCVResult>', request_body
+      true
+    end.returns(successful_purchase_response)
+
+    assert response = @gateway.purchase(@amount, @credit_card, @options.merge(
+      ignore_cvv: false
+    ))
+    assert_success response
   end
 
   def test_successful_reference_purchase
@@ -242,6 +299,30 @@ class CyberSourceTest < Test::Unit::TestCase
     assert response = @gateway.validate_pinless_debit_card(@credit_card, @options)
     assert response.success?
     assert_success(@gateway.auth_reversal(@amount, response.authorization, @options))
+  end
+
+  def test_validate_add_subscription_amount
+    stub_comms do
+      @gateway.store(@credit_card, @subscription_options)
+    end.check_request do |endpoint, data, headers|
+      assert_match %r(<grandTotalAmount>1.00<\/grandTotalAmount>), data
+      assert_match %r(<amount>1.00<\/amount>), data
+    end.respond_with(successful_update_subscription_response)
+  end
+
+  def test_successful_verify
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.verify(@credit_card, @options)
+    end.respond_with(successful_authorization_response)
+    assert_success response
+  end
+
+  def test_unsuccessful_verify
+    response = stub_comms(@gateway, :ssl_request) do
+      @gateway.verify(@credit_card, @options)
+    end.respond_with(unsuccessful_authorization_response)
+    assert_failure response
+    assert_equal "Invalid account number", response.message
   end
 
   private

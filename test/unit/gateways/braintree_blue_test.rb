@@ -33,6 +33,26 @@ class BraintreeBlueTest < Test::Unit::TestCase
     assert_equal "refund_transaction_id", response.authorization
   end
 
+  def test_transaction_uses_customer_id_by_default
+    Braintree::TransactionGateway.any_instance.expects(:sale).
+      with(has_entries(:customer_id => "present")).
+      returns(braintree_result)
+
+    assert response = @gateway.purchase(10, 'present', {})
+    assert_instance_of Response, response
+    assert_success response
+  end
+
+  def test_transaction_uses_payment_method_token_when_option
+    Braintree::TransactionGateway.any_instance.expects(:sale).
+      with(has_entries(:payment_method_token => "present")).
+      returns(braintree_result)
+
+    assert response = @gateway.purchase(10, 'present', { payment_method_token: true })
+    assert_instance_of Response, response
+    assert_success response
+  end
+
   def test_void_transaction
     Braintree::TransactionGateway.any_instance.expects(:void).
       with('transaction_id').
@@ -109,7 +129,7 @@ class BraintreeBlueTest < Test::Unit::TestCase
     result = Braintree::SuccessfulResult.new(:customer => customer)
 
     Braintree::CustomerGateway.any_instance.expects(:create).with do |params|
-      assert_equal 'merchant_account_id', params[:credit_card][:options][:verification_merchant_account_id]
+      'merchant_account_id' == params[:credit_card][:options][:verification_merchant_account_id]
     end.returns(result)
 
     gateway.store(credit_card('41111111111111111111'), :verify_card => true)
@@ -131,7 +151,7 @@ class BraintreeBlueTest < Test::Unit::TestCase
     customer.stubs(:id).returns('123')
     result = Braintree::SuccessfulResult.new(:customer => customer)
     Braintree::CustomerGateway.any_instance.expects(:create).with do |params|
-      assert_equal 'value_from_options', params[:credit_card][:options][:verification_merchant_account_id]
+      'value_from_options' == params[:credit_card][:options][:verification_merchant_account_id]
     end.returns(result)
 
     gateway.store(credit_card('41111111111111111111'), :verify_card => true, :verification_merchant_account_id => 'value_from_options')
@@ -504,6 +524,22 @@ class BraintreeBlueTest < Test::Unit::TestCase
       assert_equal logger, internal_gateway.config.logger
       assert_equal Logger::DEBUG, internal_gateway.config.logger.level
     end
+  end
+
+  def test_solution_id_is_added_to_create_transaction_parameters
+    assert_nil @gateway.send(:create_transaction_parameters, 100, credit_card("41111111111111111111"),{})[:channel]
+    ActiveMerchant::Billing::BraintreeBlueGateway.application_id = 'ABC123'
+    assert_equal @gateway.send(:create_transaction_parameters, 100, credit_card("41111111111111111111"),{})[:channel], "ABC123"
+  ensure
+    ActiveMerchant::Billing::BraintreeBlueGateway.application_id = nil
+  end
+
+  def test_successful_purchase_with_descriptor
+    Braintree::TransactionGateway.any_instance.expects(:sale).with do |params|
+      (params[:descriptor][:name] == 'wow*productname') &&
+      (params[:descriptor][:phone] == '4443331112')
+    end.returns(braintree_result)
+    @gateway.purchase(100, credit_card("41111111111111111111"), descriptor_name: 'wow*productname', descriptor_phone: '4443331112')
   end
 
   private

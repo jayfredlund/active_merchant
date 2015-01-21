@@ -46,7 +46,7 @@ class PinTest < Test::Unit::TestCase
   end
 
   def test_display_name
-    assert_equal 'Pin', PinGateway.display_name
+    assert_equal 'Pin Payments', PinGateway.display_name
   end
 
   def test_setup_purchase_parameters
@@ -82,6 +82,14 @@ class PinTest < Test::Unit::TestCase
     assert_failure response
     assert_equal "The current resource was deemed invalid.", response.message
     assert response.test?
+  end
+
+  def test_unparsable_response
+    @gateway.expects(:ssl_request).returns("This is not [ JSON")
+
+    assert response = @gateway.purchase(@amount, @credit_card, @options)
+    assert_failure response
+    assert_match(/Invalid JSON response received/, response.message)
   end
 
   def test_successful_store
