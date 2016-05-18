@@ -1,33 +1,31 @@
 # Contributing guidelines
 
-We gladly accept new gateways or bugfixes to this library. Please read the guidelines for reporting issues and submitting pull requests below.
+We gladly accept bugfixes and new gateways. Please follow the guidelines here to ensure your work is accepted.
+
+## New Gateways
+
+Please see the [ActiveMerchant Guide to Contributing a new Gateway](https://github.com/activemerchant/active_merchant/wiki/contributing) for information on adding a new gateway to ActiveMerchant.
+
+## Issues & Bugfixes
 
 ### Reporting issues
+
+When filing a new Issue:
 
 - Please make clear in the subject what gateway the issue is about.
 - Include the version of ActiveMerchant, Ruby, ActiveSupport, and Nokogiri you are using.
 
 ### Pull request guidelines
 
-1. [Fork it](http://github.com/Shopify/active_merchant/fork) and clone your new repo
+When submitting a pull request to resolve an issue:
+
+1. [Fork it](http://github.com/activemerchant/active_merchant/fork) and clone your new repo
 2. Create a branch (`git checkout -b my_awesome_feature`)
 3. Commit your changes (`git add my/awesome/file.rb; git commit -m "Added my awesome feature"`)
 4. Push your changes to your fork (`git push origin my_awesome_feature`)
-5. Open a [Pull Request](https://github.com/shopify/active_merchant/pulls)
+5. Open a [Pull Request](https://github.com/activemerchant/active_merchant/pulls)
 
-Please see the [ActiveMerchant Guide to Contributing](https://github.com/Shopify/active_merchant/wiki/contributing) for information on adding a new gateway to ActiveMerchant.
-
-The most important guidelines:
-
-- All new integrations must have unit tests and functional remote tests.
-- Your code should support all the Ruby versions and ActiveSupport versions we have enabled on Travis CI.
-- No new gem dependencies will be accepted.
-- **XML**: use Nokogiri for generating and parsing XML.
-- **JSON**: use `JSON` in the standard library to parse and generate JSON.
-- **HTTP**: use `ActiveMerchant::PostsData` to do HTTP requests.
-- Do not update the CHANGELOG, or the `ActiveMerchant::VERSION` constant.
-
-### Placement within Shopify
+## Gateway Placement within Shopify
 
 The addition of your gateway to active_merchant does not guarantee placement within Shopify. In order to have your gateway considered, please send an email to payment-integrations@shopify.com with **Active_Merchant Integration** in the subject. Be sure to include:
 
@@ -36,7 +34,9 @@ The addition of your gateway to active_merchant does not guarantee placement wit
 3. List of major supported payment methods
 4. Your most recent Certificate of PCI Compliance
 
-### Releasing
+## Version/Release Management
+
+Contributors don't need to worry about versions, this is something Committers do at important milestones:
 
 1. Check the [semantic versioning page](http://semver.org) for info on how to version the new release.
 2. Update the  `ActiveMerchant::VERSION` constant in **lib/active_merchant/version.rb**.

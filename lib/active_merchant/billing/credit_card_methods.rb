@@ -3,7 +3,7 @@ module ActiveMerchant #:nodoc:
     # Convenience methods that can be included into a custom Credit Card object, such as an ActiveRecord based Credit Card object.
     module CreditCardMethods
       CARD_COMPANIES = {
-        'visa'               => /^4\d{12}(\d{3})?$/,
+        'visa'               => /^4\d{12}(\d{3})?(\d{3})?$/,
         'master'             => /^(5[1-5]\d{4}|677189)\d{10}$/,
         'discover'           => /^(6011|65\d{2}|64[4-9]\d)\d{12}|(62\d{14})$/,
         'american_express'   => /^3[47]\d{13}$/,
@@ -16,6 +16,26 @@ module ActiveMerchant #:nodoc:
         'forbrugsforeningen' => /^600722\d{10}$/,
         'laser'              => /^(6304|6706|6709|6771(?!89))\d{8}(\d{4}|\d{6,7})?$/
       }
+
+      # http://www.barclaycard.co.uk/business/files/bin_rules.pdf
+      ELECTRON_RANGES = [
+        [400115],
+        (400837..400839),
+        (412921..412923),
+        [417935],
+        (419740..419741),
+        (419773..419775),
+        [424519],
+        (424962..424963),
+        [437860],
+        [444000],
+        [459472],
+        (484406..484411),
+        (484413..484414),
+        (484418..484418),
+        (484428..484455),
+        (491730..491759),
+      ]
 
       def self.included(base)
         base.extend(ClassMethods)
@@ -49,13 +69,18 @@ module ActiveMerchant #:nodoc:
       def valid_card_verification_value?(cvv, brand)
         cvv.to_s =~ /^\d{#{card_verification_value_length(brand)}}$/
       end
-      
+
       def card_verification_value_length(brand)
         brand == 'american_express' ? 4 : 3
       end
-      
+
       def valid_issue_number?(number)
         (number.to_s =~ /^\d{1,2}$/)
+      end
+
+      # Returns if the card matches known Electron BINs
+      def electron?
+        self.class.electron?(number)
       end
 
       module ClassMethods
@@ -68,6 +93,7 @@ module ActiveMerchant #:nodoc:
         def valid_number?(number)
           valid_test_mode_card_number?(number) ||
             valid_card_number_length?(number) &&
+            valid_card_number_characters?(number) &&
             valid_checksum?(number)
         end
 
@@ -105,6 +131,17 @@ module ActiveMerchant #:nodoc:
           return nil
         end
 
+        def electron?(number)
+          return false unless [16, 19].include?(number.length)
+
+          # don't recalculate for each range
+          bank_identification_number = first_digits(number).to_i
+
+          ELECTRON_RANGES.any? do |range|
+            range.include?(bank_identification_number)
+          end
+        end
+
         def type?(number)
           ActiveMerchant.deprecated "CreditCard#type? is deprecated and will be removed from a future release of ActiveMerchant. Please use CreditCard#brand? instead."
           brand?(number)
@@ -138,21 +175,60 @@ module ActiveMerchant #:nodoc:
           number.to_s.length >= 12
         end
 
+        def valid_card_number_characters?(number) #:nodoc:
+          !number.to_s.match(/\D/)
+        end
+
         def valid_test_mode_card_number?(number) #:nodoc:
           ActiveMerchant::Billing::Base.test? &&
             %w[1 2 3 success failure error].include?(number.to_s)
         end
 
+        ODD_LUHN_VALUE = {
+          48 => 0,
+          49 => 1,
+          50 => 2,
+          51 => 3,
+          52 => 4,
+          53 => 5,
+          54 => 6,
+          55 => 7,
+          56 => 8,
+          57 => 9,
+          nil => 0
+        }.freeze
+
+        EVEN_LUHN_VALUE = {
+          48 => 0, # 0 * 2
+          49 => 2, # 1 * 2
+          50 => 4, # 2 * 2
+          51 => 6, # 3 * 2
+          52 => 8, # 4 * 2
+          53 => 1, # 5 * 2 - 9
+          54 => 3, # 6 * 2 - 9
+          55 => 5, # etc ...
+          56 => 7,
+          57 => 9,
+        }.freeze
+
         # Checks the validity of a card number by use of the Luhn Algorithm.
         # Please see http://en.wikipedia.org/wiki/Luhn_algorithm for details.
-        def valid_checksum?(number) #:nodoc:
+        # This implementation is from the luhn_checksum gem, https://github.com/zendesk/luhn_checksum.
+        def valid_checksum?(numbers) #:nodoc:
           sum = 0
-          for i in 0..number.length
-            weight = number[-1 * (i + 2), 1].to_i * (2 - (i % 2))
-            sum += (weight < 10) ? weight : weight - 9
+
+          odd = true
+          numbers.reverse.bytes.each do |number|
+            if odd
+              odd = false
+              sum += ODD_LUHN_VALUE[number]
+            else
+              odd = true
+              sum += EVEN_LUHN_VALUE[number]
+            end
           end
 
-          (number[-1,1].to_i == (10 - sum % 10) % 10)
+          sum % 10 == 0
         end
       end
     end

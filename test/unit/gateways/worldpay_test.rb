@@ -195,7 +195,7 @@ class WorldpayTest < Test::Unit::TestCase
     end.check_request do |endpoint, data, headers|
       assert_match %r(<firstName>Jim</firstName>), data
       assert_match %r(<lastName>Smith</lastName>), data
-      assert_match %r(<address1>1234 My Street</address1>), data
+      assert_match %r(<address1>456 My Street</address1>), data
       assert_match %r(<address2>Apt 1</address2>), data
       assert_match %r(<postalCode>K1C2N6</postalCode>), data
       assert_match %r(<city>Ottawa</city>), data
@@ -209,7 +209,7 @@ class WorldpayTest < Test::Unit::TestCase
     end.check_request do |endpoint, data, headers|
       assert_match %r(<firstName>Jim</firstName>), data
       assert_match %r(<lastName>Smith</lastName>), data
-      assert_match %r(<address1>1234 My Street</address1>), data
+      assert_match %r(<address1>456 My Street</address1>), data
       assert_match %r(<address2>Apt 1</address2>), data
       assert_match %r(<postalCode>K1C2N6</postalCode>), data
       assert_match %r(<city>Ottawa</city>), data
@@ -223,7 +223,7 @@ class WorldpayTest < Test::Unit::TestCase
     end.check_request do |endpoint, data, headers|
       assert_match %r(<firstName>Jim</firstName>), data
       assert_match %r(<lastName>Smith</lastName>), data
-      assert_match %r(<address1>1234 My Street</address1>), data
+      assert_match %r(<address1>456 My Street</address1>), data
       assert_match %r(<address2>Apt 1</address2>), data
       assert_match %r(<postalCode>K1C2N6</postalCode>), data
       assert_match %r(<city>Ottawa</city>), data
@@ -383,6 +383,31 @@ class WorldpayTest < Test::Unit::TestCase
     attributes.each do |attribute, value|
       assert_match %r(#{attribute}="#{value}"), m[1]
     end
+  end
+
+  def test_successful_verify
+    @gateway.expects(:ssl_post).times(3).returns(successful_authorize_response, successful_void_response)
+
+    response = @gateway.verify(@credit_card, @options)
+    assert_success response
+  end
+
+  def test_successful_verify_with_failed_void
+    @gateway.expects(:ssl_post).times(2).returns(successful_authorize_response, failed_void_response)
+
+    response = @gateway.verify(@credit_card, @options)
+    assert_success response
+  end
+
+  def test_failed_verify
+    @gateway.expects(:ssl_post).returns(failed_authorize_response)
+
+    response = @gateway.verify(@credit_card, @options)
+    assert_failure response
+  end
+
+  def test_transcript_scrubbing
+    assert_equal scrubbed_transcript, @gateway.scrub(transcript)
   end
 
   private
@@ -617,6 +642,22 @@ class WorldpayTest < Test::Unit::TestCase
     RESPONSE
   end
 
+  def failed_void_response
+    <<-REQUEST
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE paymentService PUBLIC "-//WorldPay//DTD WorldPay PaymentService v1//EN" "http://dtd.worldpay.com/paymentService_v1.dtd">
+      <paymentService version="1.4" merchantCode="CHARGEBEEM1">
+        <reply>
+          <orderStatus orderCode="non_existent_authorization">
+            <error code="5">
+              <![CDATA[Could not find payment for order]]>
+            </error>
+          </orderStatus>
+        </reply>
+      </paymentService>
+    REQUEST
+  end
+
   def sample_authorization_request
     <<-REQUEST
       <?xml version="1.0" encoding="UTF-8"?>
@@ -639,7 +680,7 @@ class WorldpayTest < Test::Unit::TestCase
                 <address>
                   <firstName>Jim</firstName>
                   <lastName>Smith</lastName>
-                  <street>1234 My Street</street>
+                  <street>456 My Street</street>
                   <houseName>Apt 1</houseName>
                   <postalCode>K1C2N6</postalCode>
                   <city>Ottawa</city>
@@ -661,5 +702,75 @@ class WorldpayTest < Test::Unit::TestCase
       </submit>
       </paymentService>
     REQUEST
+  end
+
+  def transcript
+    <<-TRANSCRIPT
+    <paymentService version="1.4" merchantCode="CHARGEBEEM1">
+      <submit>
+        <order orderCode="4efd348dbe6708b9ec9c118322e0954f">
+          <description>Purchase</description>
+          <amount value="100" currencyCode="GBP" exponent="2"/>
+          <paymentDetails>
+            <VISA-SSL>
+              <cardNumber>4111111111111111</cardNumber>
+              <expiryDate>
+                <date month="09" year="2016"/>
+              </expiryDate>
+              <cardHolderName>Longbob Longsen</cardHolderName>
+              <cvc>123</cvc>
+              <cardAddress>
+                <address>
+                  <address1>N/A</address1>
+                  <postalCode>0000</postalCode>
+                  <city>N/A</city>
+                  <state>N/A</state>
+                  <countryCode>US</countryCode>
+                </address>
+              </cardAddress>
+            </VISA-SSL>
+          </paymentDetails>
+          <shopper>
+            <shopperEmailAddress>wow@example.com</shopperEmailAddress>
+          </shopper>
+        </order>
+      </submit>
+    </paymentService>
+    TRANSCRIPT
+  end
+
+  def scrubbed_transcript
+    <<-TRANSCRIPT
+    <paymentService version="1.4" merchantCode="CHARGEBEEM1">
+      <submit>
+        <order orderCode="4efd348dbe6708b9ec9c118322e0954f">
+          <description>Purchase</description>
+          <amount value="100" currencyCode="GBP" exponent="2"/>
+          <paymentDetails>
+            <VISA-SSL>
+              <cardNumber>[FILTERED]</cardNumber>
+              <expiryDate>
+                <date month="09" year="2016"/>
+              </expiryDate>
+              <cardHolderName>Longbob Longsen</cardHolderName>
+              <cvc>[FILTERED]</cvc>
+              <cardAddress>
+                <address>
+                  <address1>N/A</address1>
+                  <postalCode>0000</postalCode>
+                  <city>N/A</city>
+                  <state>N/A</state>
+                  <countryCode>US</countryCode>
+                </address>
+              </cardAddress>
+            </VISA-SSL>
+          </paymentDetails>
+          <shopper>
+            <shopperEmailAddress>wow@example.com</shopperEmailAddress>
+          </shopper>
+        </order>
+      </submit>
+    </paymentService>
+    TRANSCRIPT
   end
 end
