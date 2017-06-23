@@ -438,16 +438,36 @@ module ActiveMerchant #:nodoc:
         end
       end
 
+      def add_custom_line_item_data(xml, options)
+        if options[:line_items]
+          options[:line_items].each_with_index do |value, index|
+            xml.tag! 'item', {'id' => index} do
+              xml.tag! 'unitPrice', amount(value[:declared_value])
+              xml.tag! 'quantity', value[:quantity]
+              xml.tag! 'productName', value[:description]
+              xml.tag! 'productSKU', value[:sku]
+              xml.tag! 'taxAmount', amount(value[:tax_amount])
+            end
+          end
+        end
+      end
+
       def add_merchant_data(xml, options)
         xml.tag! 'merchantID', @options[:login]
         xml.tag! 'merchantReferenceCode', options[:order_id] || generate_unique_id
         xml.tag! 'clientLibrary' ,'Ruby Active Merchant'
         xml.tag! 'clientLibraryVersion',  VERSION
         xml.tag! 'clientEnvironment' , RUBY_PLATFORM
-        if @options[:merchant_descriptor]
+        if @options[:merchant_descriptor] || @options[:invoice_header_options]
           xml.tag! 'invoiceHeader' do
-            xml.tag! 'merchantDescriptor', @options[:merchant_descriptor][:name]
-            xml.tag! 'merchantDescriptorContact', @options[:merchant_descriptor][:phone]
+            if @options[:merchant_descriptor]
+              xml.tag! 'merchantDescriptor', @options[:merchant_descriptor][:name]
+              xml.tag! 'merchantDescriptorContact', @options[:merchant_descriptor][:phone]
+            end
+            if @options[:invoice_header_options]
+              xml.tag! 'userPO', @options[:invoice_header_options][:user_po]
+              xml.tag! 'taxable', @options[:invoice_header_options][:taxable]
+            end
           end
         end
       end
@@ -691,6 +711,7 @@ module ActiveMerchant #:nodoc:
             xml.tag! 's:Body', {'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance', 'xmlns:xsd' => 'http://www.w3.org/2001/XMLSchema'} do
               xml.tag! 'requestMessage', {'xmlns' => "urn:schemas-cybersource-com:transaction-data-#{XSD_VERSION}"} do
                 add_merchant_data(xml, options)
+                add_custom_line_item_data(xml, options)
                 xml << body
               end
             end
