@@ -21,7 +21,7 @@ module ActiveMerchant #:nodoc:
         'unchecked' => 'P'
       }
 
-      self.supported_countries = %w(AT AU BE CA CH DE DK ES FI FR GB IE IT LU NL NO SE SG US)
+      self.supported_countries = %w(AT AU BE BR CA CH DE DK ES FI FR GB HK IE IT JP LU MX NL NO NZ PT SE SG US)
       self.default_currency = 'USD'
       self.money_format = :cents
       self.supported_cardtypes = [:visa, :master, :american_express, :discover, :jcb, :diners_club, :maestro]
@@ -51,11 +51,26 @@ module ActiveMerchant #:nodoc:
         "business" => "company",
       }
 
+      MINIMUM_AUTHORIZE_AMOUNTS = {
+        "USD" => 100,
+        "CAD" => 100,
+        "GBP" => 60,
+        "EUR" => 100,
+        "DKK" => 500,
+        "NOK" => 600,
+        "SEK" => 600,
+        "CHF" => 100,
+        "AUD" => 100,
+        "JPY" => 100,
+        "MXN" => 2000,
+        "SGD" => 100,
+        "HKD" => 800
+      }
+
       def initialize(options = {})
         requires!(options, :login)
         @api_key = options[:login]
         @fee_refund_api_key = options[:fee_refund_login]
-
         super
       end
 
@@ -97,6 +112,7 @@ module ActiveMerchant #:nodoc:
           end
           r.process do
             post = create_post_for_auth_or_purchase(money, payment, options)
+            post[:card][:processing_method] = 'quick_chip' if quickchip_payment?(payment)
             commit(:post, 'charges', post, options)
           end
         end.responses.last
@@ -117,6 +133,7 @@ module ActiveMerchant #:nodoc:
 
       def void(identification, options = {})
         post = {}
+        post[:metadata] = options[:metadata] if options[:metadata]
         post[:expand] = [:charge]
         commit(:post, "charges/#{CGI.escape(identification)}/refunds", post, options)
       end
@@ -134,23 +151,22 @@ module ActiveMerchant #:nodoc:
 
           return r unless options[:refund_fee_amount]
 
-          r.process { fetch_application_fees(identification, options) }
+          r.process { fetch_application_fee(identification, options) }
           r.process { refund_application_fee(options[:refund_fee_amount], application_fee_from_response(r.responses.last), options) }
         end
       end
 
       def verify(payment, options = {})
         MultiResponse.run(:use_first_response) do |r|
-          r.process { authorize(50, payment, options) }
+          r.process { authorize(auth_minimum_amount(options), payment, options) }
+          options[:idempotency_key] = nil
           r.process(:ignore_result) { void(r.authorization, options) }
         end
       end
 
       def application_fee_from_response(response)
         return unless response.success?
-
-        application_fees = response.params["data"].select { |fee| fee["object"] == "application_fee" }
-        application_fees.first["id"] unless application_fees.empty?
+        response.params["application_fee"] unless response.params["application_fee"].empty?
       end
 
       def refund_application_fee(money, identification, options = {})
@@ -158,9 +174,11 @@ module ActiveMerchant #:nodoc:
 
         post = {}
         add_amount(post, money, options)
-        options.merge!(:key => @fee_refund_api_key)
+        options.merge!(:key => @fee_refund_api_key) if @fee_refund_api_key
+        options.delete(:stripe_account)
 
-        commit(:post, "application_fees/#{CGI.escape(identification)}/refund", post, options)
+        refund_fee = commit(:post, "application_fees/#{CGI.escape(identification)}/refunds", post, options)
+        application_fee_response!(refund_fee, "Application fee could not be refunded: #{refund_fee.message}")
       end
 
       # Note: creating a new credit card will not change the customer's existing default credit card (use :set_default => true)
@@ -254,13 +272,15 @@ module ActiveMerchant #:nodoc:
       def scrub(transcript)
         transcript.
           gsub(%r((Authorization: Basic )\w+), '\1[FILTERED]').
-          gsub(%r((card\[number\]=)\d+), '\1[FILTERED]').
-          gsub(%r((card\[cvc\]=)\d+), '\1[FILTERED]').
           gsub(%r((&?three_d_secure\[cryptogram\]=)[\w=]*(&?)), '\1[FILTERED]\2').
-          gsub(%r((card\[swipe_data\]=)[^&]+(&?)), '\1[FILTERED]\2').
+          gsub(%r((card\[cryptogram\]=)[^&]+(&?)), '\1[FILTERED]\2').
+          gsub(%r((card\[cvc\]=)\d+), '\1[FILTERED]').
+          gsub(%r((card\[emv_approval_data\]=)[^&]+(&?)), '\1[FILTERED]\2').
+          gsub(%r((card\[emv_auth_data\]=)[^&]+(&?)), '\1[FILTERED]\2').
           gsub(%r((card\[encrypted_pin\]=)[^&]+(&?)), '\1[FILTERED]\2').
           gsub(%r((card\[encrypted_pin_key_id\]=)[\w=]+(&?)), '\1[FILTERED]\2').
-          gsub(%r((card\[emv_auth_data\]=)[^&]+(&?)), '\1[FILTERED]\2')
+          gsub(%r((card\[number\]=)\d+), '\1[FILTERED]').
+          gsub(%r((card\[swipe_data\]=)[^&]+(&?)), '\1[FILTERED]\2')
       end
 
       def supports_network_tokenization?
@@ -284,7 +304,10 @@ module ActiveMerchant #:nodoc:
           add_creditcard(post, payment, options)
         end
 
-        unless emv_payment?(payment)
+        if emv_payment?(payment)
+          add_statement_address(post, options)
+          add_emv_metadata(post, payment)
+        else
           add_amount(post, money, options, true)
           add_customer_data(post, options)
           post[:description] = options[:description]
@@ -346,12 +369,23 @@ module ActiveMerchant #:nodoc:
         end
       end
 
+      def add_statement_address(post, options)
+        return unless statement_address = options[:statement_address]
+        return unless [:address1, :city, :zip, :state].all? { |key| statement_address[key].present? }
+
+        post[:statement_address] = {}
+        post[:statement_address][:line1] = statement_address[:address1]
+        post[:statement_address][:line2] = statement_address[:address2] if statement_address[:address2].present?
+        post[:statement_address][:city] = statement_address[:city]
+        post[:statement_address][:postal_code] = statement_address[:zip]
+        post[:statement_address][:state] = statement_address[:state]
+      end
+
       def add_creditcard(post, creditcard, options)
         card = {}
         if emv_payment?(creditcard)
           add_emv_creditcard(post, creditcard.icc_data)
-          post[:card][:read_method] = "contactless" if creditcard.contactless_emv
-          post[:card][:read_method] = "contactless_magstripe_mode" if creditcard.contactless_magstripe
+          post[:card][:read_method] = "contactless" if creditcard.read_method == 'contactless'
           if creditcard.encrypted_pin_cryptogram.present? && creditcard.encrypted_pin_ksn.present?
             post[:card][:encrypted_pin] = creditcard.encrypted_pin_cryptogram
             post[:card][:encrypted_pin_key_id] = creditcard.encrypted_pin_ksn
@@ -359,9 +393,11 @@ module ActiveMerchant #:nodoc:
         elsif creditcard.respond_to?(:number)
           if creditcard.respond_to?(:track_data) && creditcard.track_data.present?
             card[:swipe_data] = creditcard.track_data
-            card[:fallback_reason] = creditcard.fallback_reason if creditcard.fallback_reason
-            card[:read_method] = "contactless" if creditcard.contactless_emv
-            post[:read_method] = "contactless_magstripe_mode" if creditcard.contactless_magstripe
+            if creditcard.respond_to?(:read_method)
+              card[:fallback_reason] = 'no_chip' if creditcard.read_method == 'fallback_no_chip'
+              card[:fallback_reason] = 'chip_error' if creditcard.read_method == 'fallback_chip_error'
+              card[:read_method] = "contactless_magstripe_mode" if creditcard.read_method == 'contactless_magstripe'
+            end
           else
             card[:number] = creditcard.number
             card[:exp_month] = creditcard.month
@@ -369,14 +405,13 @@ module ActiveMerchant #:nodoc:
             card[:cvc] = creditcard.verification_value if creditcard.verification_value?
             card[:name] = creditcard.name if creditcard.name
           end
-          post[:card] = card
 
-          if creditcard.is_a?(NetworkTokenizationCreditCard) && creditcard.source == :apple_pay
-            post[:three_d_secure] = {
-              apple_pay:  true,
-              cryptogram: creditcard.payment_cryptogram
-            }
+          if creditcard.is_a?(NetworkTokenizationCreditCard)
+            card[:cryptogram] = creditcard.payment_cryptogram
+            card[:eci] = creditcard.eci.rjust(2, '0') if creditcard.eci =~ /^[0-9]+$/
+            card[:tokenization_method] = creditcard.source.to_s
           end
+          post[:card] = card
 
           add_address(post, options)
         elsif creditcard.kind_of?(String)
@@ -414,16 +449,27 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_metadata(post, options = {})
-        post[:metadata] = options[:metadata] || {}
+        post[:metadata] ||= {}
+        post[:metadata].merge!(options[:metadata]) if options[:metadata]
         post[:metadata][:email] = options[:email] if options[:email]
         post[:metadata][:order_id] = options[:order_id] if options[:order_id]
         post.delete(:metadata) if post[:metadata].empty?
       end
 
-      def fetch_application_fees(identification, options = {})
+      def add_emv_metadata(post, creditcard)
+        post[:metadata] ||= {}
+        post[:metadata][:card_read_method] = creditcard.read_method if creditcard.respond_to?(:read_method)
+      end
+
+      def fetch_application_fee(identification, options = {})
         options.merge!(:key => @fee_refund_api_key)
 
-        commit(:get, "application_fees?charge=#{identification}", nil, options)
+        fetch_charge = commit(:get, "charges/#{CGI.escape(identification)}", nil, options)
+        application_fee_response!(fetch_charge, "Application fee id could not be retrieved: #{fetch_charge.message}")
+      end
+
+      def application_fee_response!(response, message)
+        response.success? ? response : Response.new(false, message)
       end
 
       def parse(body)
@@ -457,12 +503,17 @@ module ActiveMerchant #:nodoc:
           "Authorization" => "Basic " + Base64.encode64(key.to_s + ":").strip,
           "User-Agent" => "Stripe/v1 ActiveMerchantBindings/#{ActiveMerchant::VERSION}",
           "Stripe-Version" => api_version(options),
-          "X-Stripe-Client-User-Agent" => user_agent,
+          "X-Stripe-Client-User-Agent" => stripe_client_user_agent(options),
           "X-Stripe-Client-User-Metadata" => {:ip => options[:ip]}.to_json
         }
         headers.merge!("Idempotency-Key" => idempotency_key) if idempotency_key
         headers.merge!("Stripe-Account" => options[:stripe_account]) if options[:stripe_account]
         headers
+      end
+
+      def stripe_client_user_agent(options)
+        return user_agent unless options[:application]
+        JSON.dump(JSON.parse(user_agent).merge!({application: options[:application]}))
       end
 
       def api_version(options)
@@ -549,6 +600,10 @@ module ActiveMerchant #:nodoc:
         payment.respond_to?(:emv?) && payment.emv?
       end
 
+      def quickchip_payment?(payment)
+        payment.respond_to?(:read_method) && payment.read_method == 'contact_quickchip'
+      end
+
       def card_from_response(response)
         response["card"] || response["active_card"] || response["source"] || {}
       end
@@ -599,6 +654,11 @@ module ActiveMerchant #:nodoc:
         else
           card_brand(payment_method) == "check"
         end
+      end
+
+      def auth_minimum_amount(options)
+        return 100 unless options[:currency]
+        return MINIMUM_AUTHORIZE_AMOUNTS[options[:currency].upcase] || 100
       end
     end
   end

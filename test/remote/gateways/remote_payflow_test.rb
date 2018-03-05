@@ -129,6 +129,16 @@ class RemotePayflowTest < Test::Unit::TestCase
     assert_equal "Verified", response.message
   end
 
+  def test_successful_verify_amex
+    @amex_credit_card = credit_card(
+      '378282246310005',
+      :brand => 'american_express'
+    )
+    assert response = @gateway.verify(@amex_credit_card, @options)
+    assert_success response
+    assert_equal "Approved", response.message
+  end
+
   def test_failed_verify
     assert response = @gateway.verify(credit_card("4000056655665556"), @options)
     assert_failure response
@@ -292,6 +302,13 @@ class RemotePayflowTest < Test::Unit::TestCase
 
     assert credit = @gateway.refund(amount, purchase.authorization)
     assert_success credit
+  end
+
+  def test_verify_credentials
+    assert @gateway.verify_credentials
+
+    gateway = PayflowGateway.new(login: "unknown_login", password: "unknown_password", partner: "PayPal")
+    assert !gateway.verify_credentials
   end
 
   def test_purchase_and_refund_with_three_d_secure_option

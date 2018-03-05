@@ -23,16 +23,17 @@ module ActiveMerchant #:nodoc:
       def purchase(money, payment, options={})
         MultiResponse.run do |r|
           r.process { authorize(money, payment, options) }
-          r.process { capture(money, r.authorization, options) }
+          r.process { capture(money, r.authorization, options) } unless capture_requested?(r)
         end
       end
 
       def authorize(money, payment, options={})
         post = nestable_hash
         add_order(post, money, options)
-        add_payment(post, payment)
+        add_payment(post, payment, options)
         add_customer_data(post, options, payment)
         add_address(post, payment, options)
+        add_creator_info(post, options)
 
         commit(:authorize, post)
       end
@@ -41,18 +42,21 @@ module ActiveMerchant #:nodoc:
         post = nestable_hash
         add_order(post, money, options)
         add_customer_data(post, options)
+        add_creator_info(post, options)
         commit(:capture, post, authorization)
       end
 
       def refund(money, authorization, options={})
         post = nestable_hash
-        add_amount(post, money, options={})
+        add_amount(post, money, options)
         add_refund_customer_data(post, options)
+        add_creator_info(post, options)
         commit(:refund, post, authorization)
       end
 
       def void(authorization, options={})
         post = nestable_hash
+        add_creator_info(post, options)
         commit(:void, post, authorization)
       end
 
@@ -80,7 +84,9 @@ module ActiveMerchant #:nodoc:
         "visa" => "1",
         "american_express" => "2",
         "master" => "3",
-        "discover" => "128"
+        "discover" => "128",
+        "jcb" => "125",
+        "diners_club" => "132"
       }
 
       def add_order(post, money, options)
@@ -97,22 +103,35 @@ module ActiveMerchant #:nodoc:
         }
       end
 
-      def add_amount(post, money, options)
+      def add_creator_info(post, options)
+        post['sdkIdentifier'] = options[:sdk_identifier] if options[:sdk_identifier]
+        post['sdkCreator'] = options[:sdk_creator] if options[:sdk_creator]
+        post['integrator'] = options[:integrator] if options[:integrator]
+        post['shoppingCartExtension'] = {}
+        post['shoppingCartExtension']['creator'] = options[:creator] if options[:creator]
+        post['shoppingCartExtension']['name'] = options[:name] if options[:name]
+        post['shoppingCartExtension']['version'] = options[:version] if options[:version]
+        post['shoppingCartExtension']['extensionID'] = options[:extension_ID] if options[:extension_ID]
+      end
+
+      def add_amount(post, money, options={})
         post["amountOfMoney"] = {
           "amount" => amount(money),
           "currencyCode" => options[:currency] || currency(money)
         }
       end
 
-      def add_payment(post, payment)
+      def add_payment(post, payment, options)
         year  = format(payment.year, :two_digits)
         month = format(payment.month, :two_digits)
         expirydate =   "#{month}#{year}"
+        pre_authorization = options[:pre_authorization] ? 'PRE_AUTHORIZATION' : 'FINAL_AUTHORIZATION'
 
         post["cardPaymentMethodSpecificInput"] = {
             "paymentProductId" => BRAND_MAP[payment.brand],
             "skipAuthentication" => "true", # refers to 3DSecure
-            "skipFraudService" => "true"
+            "skipFraudService" => "true",
+            "authorizationMode" => pre_authorization
         }
         post["cardPaymentMethodSpecificInput"]["card"] = {
             "cvv" => payment.verification_value,
@@ -129,8 +148,8 @@ module ActiveMerchant #:nodoc:
         if payment
           post["order"]["customer"]["personalInformation"] = {
             "name" => {
-              "firstName" => payment.first_name,
-              "surname" => payment.last_name
+              "firstName" => payment.first_name[0..14],
+              "surname" => payment.last_name[0..69]
             }
           }
         end
@@ -260,14 +279,20 @@ EOS
       end
 
       def success_from(response)
-        !response["errorId"]
+        !response["errorId"] && response["status"] != "REJECTED"
       end
 
       def message_from(succeeded, response)
         if succeeded
           "Succeeded"
         else
-          response["errors"][0]["message"] || "Unable to read error message"
+          if errors = response["errors"]
+            errors.first.try(:[], "message")
+          elsif status = response["status"]
+            "Status: " + status
+          else
+            "No message available"
+          end
         end
       end
 
@@ -281,12 +306,22 @@ EOS
 
       def error_code_from(succeeded, response)
         unless succeeded
-          response["errors"][0]["code"] || "Unable to read error code"
+          if errors = response["errors"]
+            errors.first.try(:[], "code")
+          elsif status = response.try(:[], "statusOutput").try(:[], "statusCode")
+            status.to_s
+          else
+            "No error code available"
+          end
         end
       end
 
       def nestable_hash
         Hash.new {|h,k| h[k] = Hash.new(&h.default_proc) }
+      end
+
+      def capture_requested?(response)
+        response.params.try(:[], "payment").try(:[], "status") == "CAPTURE_REQUESTED"
       end
     end
   end
