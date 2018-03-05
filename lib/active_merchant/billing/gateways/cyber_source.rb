@@ -434,11 +434,11 @@ module ActiveMerchant #:nodoc:
         if options[:line_items]
           options[:line_items].each_with_index do |value, index|
             xml.tag! 'item', {'id' => index} do
-              xml.tag! 'unitPrice', amount(value[:declared_value])
+              xml.tag! 'unitPrice', localized_amount(value[:declared_value].to_i, options[:currency] || default_currency)
               xml.tag! 'quantity', value[:quantity]
               xml.tag! 'productName', value[:description]
               xml.tag! 'productSKU', value[:sku]
-              xml.tag! 'taxAmount', amount(value[:tax_amount])
+              xml.tag! 'taxAmount', localized_amount(value[:tax_amount].to_i, options[:currency] || default_currency)
             end
           end
         end
